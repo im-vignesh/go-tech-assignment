@@ -1,52 +1,83 @@
 package main
 
 import (
+	"airstack-tech-assignment/employee"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"net/http"
+	"sync"
 	"time"
 )
 
+const MAX_CONNCURRENT_REQ_EMPLOYEE_API int = 10
+
 func main() {
 	start := time.Now()
-	terms := []int{
-		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 
-		16, 17, 18,19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+	employeeIDs := []int64{
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+		16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
 	}
-
-	c := &http.Client{Timeout: time.Millisecond * 15000}
-
-	for i, num := range terms {
-		callApi(num, i, c)
-	}
+	processFetchEmpDetailRequest(employeeIDs)
 	log.Print("Done")
 	log.Print(time.Now().Sub(start).Seconds())
 }
 
-func callApi(num, id int, c *http.Client) {
+func processFetchEmpDetailRequest(employeeIDs []int64) {
+	var (
+		wg                   sync.WaitGroup
+		getEmpDetailsJobChan = make(chan int64, MAX_CONNCURRENT_REQ_EMPLOYEE_API)
+		responseChan         = make(chan string, len(employeeIDs))
+	)
 
-	log.Printf("Calling API for id %d", id)
+	wg.Add(MAX_CONNCURRENT_REQ_EMPLOYEE_API)
 
-	baseURL := "https://dummy.restapiexample.com/api/v1/employee/%d"
-
-	ur := fmt.Sprintf(baseURL, num)
-
-	req, err := http.NewRequest(http.MethodGet, ur, nil)
-	if err != nil {
-		//log.Printf("error creating a request for term %d :: error is %+v", num, err)
-		return
+	// Spinning up the workers
+	for i := 0; i < MAX_CONNCURRENT_REQ_EMPLOYEE_API; i++ {
+		go worker(getEmpDetailsJobChan, responseChan, &wg)
 	}
-	res, err := c.Do(req)
-	if err != nil {
-		//log.Printf("error querying for term %d :: error is %+v", num, err)
-		return
+
+	// Queueing Jobs in channel
+	for i := 0; i < len(employeeIDs); {
+		if queueJob(employeeIDs[i], getEmpDetailsJobChan) {
+			i++
+		}
 	}
-	defer res.Body.Close()
-	_, err = ioutil.ReadAll(res.Body)
-	if err != nil {
-		//log.Printf("error reading response body :: error is %+v", err)
-		return
+
+	close(getEmpDetailsJobChan)
+
+	wg.Wait()
+
+	for noOfReqProcesssed:=0; noOfReqProcesssed<len(employeeIDs); {
+		select {
+		case response:= <- responseChan:
+			fmt.Printf("%+v\n", response)
+			noOfReqProcesssed++
+		}
 	}
-	//log.Printf("%d  :: ok", id)
+
+}
+
+func queueJob(job int64, jobChan chan<- int64) bool {
+	select {
+	case jobChan <- job:
+		return true
+	default:
+		return false
+	}
+}
+
+func worker(jobChan <-chan int64, responseChan chan<- string, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	fmt.Println("Worker is waiting for jobs")
+
+	for employeeId := range jobChan {
+		employee, err := employee.GetEmployee(employeeId)
+		var response string
+		if err != nil {
+			response = fmt.Sprintf("ERROR: %s", err.Error())
+		} else {
+			response = fmt.Sprintf("%+v", *employee)
+		}
+		responseChan <- response
+	}
 }
